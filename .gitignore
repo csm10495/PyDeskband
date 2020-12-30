@@ -1,0 +1,17 @@
+# Python things
+dist/
+build/
+pydeskband.egg-info
+**.pyc
+
+# Built dlls in Python package
+pydeskband/dlls/
+
+# VS/MSVC things
+dll/PyDeskband/.vs/
+dll/PyDeskband/Debug/
+dll/PyDeskband/Release/
+dll/PyDeskband/x64/
+dll/PyDeskband/PyDeskband/Debug/
+dll/PyDeskband/PyDeskband/Release/
+dll/PyDeskband/PyDeskband/x64/
