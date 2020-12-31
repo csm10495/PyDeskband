@@ -356,7 +356,7 @@ std::string ControlPipe::processRequest(std::string message)
             else if (lineSplit[0] == "SENDMESSAGE")
             {
                 SendMessage(deskband->m_hwnd, std::stoi(lineSplit[1]), 0, 0);
-                response.setOk();;
+                response.setOk();
             }
         }
     }

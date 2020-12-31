@@ -36,13 +36,16 @@ class _LogTailer(Thread):
 
     def run(self):
         ''' Ran in the other thread. Will effectively 'tail -f' the log file and print to stderr the new lines '''
-        with open(_LogTailer.LOG_PATH, 'rb') as log_file:
-            log_file.seek(self.starting_offset)
-            while not self.exit_event.is_set():
-                line = log_file.readline().rstrip().decode()
-                if line:
-                    print(line, file=sys.stderr)
-                time.sleep(.01)
+        try:
+            with open(_LogTailer.LOG_PATH, 'rb') as log_file:
+                log_file.seek(self.starting_offset)
+                while not self.exit_event.is_set():
+                    line = log_file.readline().rstrip().decode()
+                    if line:
+                        print(line, file=sys.stderr)
+                    time.sleep(.01)
+        except KeyboardInterrupt:
+            pass
 
 class ControlPipe:
     ''' The mechanism for controlling PyDeskband.'''
@@ -129,9 +132,14 @@ class ControlPipe:
         ''' Requests that PyDeskband repaint all TextInfos now '''
         self.send_command('PAINT')
 
-    def clear(self) -> None:
-        ''' Clears all TextInfos and re-paints '''
+    def clear(self, reset_target_textinfo:bool=True) -> None:
+        '''
+        Clears all TextInfos and re-paints.
+
+        If reset_target_textinfo is set, will also reset the current TextInfo target.
+        '''
         self.send_command('CLEAR')
+        self._set_textinfo_target()
 
     def set_logging(self, enabled:bool, tail:bool=False) -> None:
         '''
@@ -162,6 +170,17 @@ class ControlPipe:
         return int(self.send_command([
             'GET', 'TRANSPORT_VERSION'
         ])[0])
+
+    def set_windows_message_handle_shell_cmd(self, msg_id:int, shell_cmd:str=None) -> None:
+        ''' Tell PyDeskband that if msg_id is sent to the form, run this shell command. If shell_cmd is None, clear existing handling of the msg_id. '''
+        if shell_cmd is not None:
+            return self.send_command([
+                'SET', 'WIN_MSG', msg_id, self._verify_input_text(shell_cmd)
+            ])
+        else:
+            return self.send_command([
+                'SET', 'WIN_MSG', msg_id
+            ])
 
     def _send_message(self, msg:int) -> None:
         ''' Likely only useful for debugging. Send a WM_... message with the given id to our hwnd.'''
@@ -219,40 +238,48 @@ class ControlPipe:
         # Cheap use of eval. It can be 'None' or an int.
         return eval(self.send_command(["GET", "TEXTINFO_TARGET"])[0])
 
-    def __test(self):
-        ''' a test... that is broken at the moment :) '''
+    def _test(self):
+        ''' a test... :) '''
         import psutil, time
 
-        def get_bytes_recv():
-            return psutil.net_io_counters().bytes_recv
+        def get_mbps_down():
+            last_timestamp = getattr(get_mbps_down, 'last_timestamp', time.time())
+            last_bytes = getattr(get_mbps_down, 'last_bytes', 0)
+
+            get_mbps_down.last_bytes = psutil.net_io_counters().bytes_recv
+
+            now = time.time()
+            mbps = (get_mbps_down.last_bytes - float(last_bytes)) / 125000.0 /  (now - last_timestamp)
+            get_mbps_down.last_timestamp = now
+            return mbps
+
+        def get_mbps_up():
+            last_timestamp = getattr(get_mbps_up, 'last_timestamp', time.time())
+            last_bytes = getattr(get_mbps_up, 'last_bytes', 0)
+
+            get_mbps_up.last_bytes = psutil.net_io_counters().bytes_sent
+
+            now = time.time()
+            mbps = (get_mbps_up.last_bytes - float(last_bytes)) / 125000.0 /  (now - last_timestamp)
+            get_mbps_up.last_timestamp = now
+            return mbps
+
+        def get_cpu_used_percent():
+            return psutil.cpu_percent()
 
         self.clear()
 
-        cpu = 100 - psutil.cpu_times_percent(interval=1).idle
-        # idx = 0
-        self.add_new_text_info(f'CPU: {cpu}')
-
-        # idx = 1
-        self.add_new_text_info(f'IDown: XX', y=20)
-
-        self.paint()
-
-        lastBytes = get_bytes_recv()
-        lastStamp = time.time()
+        # Left click: Open task manager
+        self.set_windows_message_handle_shell_cmd(0x0201, r'start C:\Windows\System32\Taskmgr.exe')
+        cpuTextInfo = self.add_new_text_info('')
+        netDownTextInfo = self.add_new_text_info('', y=20)
 
         while True:
-            cpu = 100 - psutil.cpu_times_percent(interval=1).idle
-            self.modify_text_info(0, f'CPU: {cpu}')
-
-            thisBytes = get_bytes_recv()
-
-            mbps = int(float(thisBytes - lastBytes) / 125000.0 / (time.time() - lastStamp))
-            lastStamp = time.time()
-
-            self.modify_text_info(1, f'IDown: {mbps} Mbps')
-            lastBytes = thisBytes
-
+            cpu = get_cpu_used_percent()
+            cpuTextInfo.set_text(f'CPU: {cpu}%')
+            netDownTextInfo.set_text(f'Net: {get_mbps_down():.02f}/{get_mbps_up():.02f} Mbps')
             self.paint()
+            time.sleep(1)
 
 class TextInfo:
     '''
