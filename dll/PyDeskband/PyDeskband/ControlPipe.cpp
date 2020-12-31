@@ -179,6 +179,10 @@ std::string ControlPipe::processRequest(std::string message)
 {
     std::string ret = "BadCommand";
     auto lineSplit = split(message, TRANSPORT_DELIM[0]);
+    auto textInfo = getTextInfoTarget();
+
+    #define ENSURE_TEXT_INFO_OK() if (textInfo == NULL) { return "OutOfBoundsTextInfoTarget\n";}
+
     if (lineSplit.size())
     {
         if (lineSplit[0] == "GET")
@@ -204,26 +208,38 @@ std::string ControlPipe::processRequest(std::string message)
             {
                 ret = std::to_string(textInfos.size());
             }
+            else if (lineSplit[1] == "TEXTINFO_TARGET")
+            {
+                if (textInfoTarget)
+                {
+                    ret = std::to_string(*textInfoTarget);
+                }
+                else
+                {
+                    ret = "None";
+                }
+            }
+            else if (lineSplit[1] == "RGB")
+            {
+                ENSURE_TEXT_INFO_OK();
+                ret = std::to_string(textInfo->red) + TRANSPORT_DELIM + std::to_string(textInfo->green) + TRANSPORT_DELIM + std::to_string(textInfo->blue);
+            }
+            else if (lineSplit[1] == "TEXT")
+            {
+                ENSURE_TEXT_INFO_OK();
+                ret = textInfo->text;
+            }
+            else if (lineSplit[1] == "XY")
+            {
+                ENSURE_TEXT_INFO_OK();
+                ret = std::to_string(textInfo->rect.left) + TRANSPORT_DELIM + std::to_string(textInfo->rect.top);
+            }
         }
         else if (lineSplit[0] == "SET")
         {
-            if (textInfos.size() == 0)
-            {
-                textInfos.push_back(TextInfo());
-            }
-
-            // get a ref to the last text info
-            auto textInfo = &textInfos[textInfos.size() - 1];
-
-            // swap that ref if textInfoTarget is set.
-            if (textInfoTarget)
-            {
-                // todo: error checking?
-                textInfo = &textInfos[*textInfoTarget];
-            }
-
             if (lineSplit[1] == "RGB")
             {
+                ENSURE_TEXT_INFO_OK();
                 textInfo->red = std::stoi(lineSplit[2]);
                 textInfo->green = std::stoi(lineSplit[3]);
                 textInfo->blue = std::stoi(lineSplit[4]);
@@ -231,11 +247,14 @@ std::string ControlPipe::processRequest(std::string message)
             }
             else if (lineSplit[1] == "TEXT")
             {
+                ENSURE_TEXT_INFO_OK();
                 textInfo->text = std::string(lineSplit[2]);
                 ret = "OK";
             }
             else if (lineSplit[1] == "XY")
             {
+                ENSURE_TEXT_INFO_OK();
+
                 // xy from top left
                 textInfo->rect.left = std::stol(lineSplit[2]);
                 textInfo->rect.top = std::stol(lineSplit[3]);
@@ -322,6 +341,33 @@ SIZE ControlPipe::getTextSize(const std::string& text)
     GetTextExtentPoint32A(dc, text.c_str(), (int)text.size(), &sz);
     ReleaseDC(deskband->m_hwnd, dc);
     return sz;
+}
+
+TextInfo* ControlPipe::getTextInfoTarget()
+{
+    if (textInfos.size() == 0)
+    {
+        textInfos.push_back(TextInfo());
+    }
+
+    // get a ref to the last text info
+    auto textInfo = &textInfos[textInfos.size() - 1];
+
+    // swap that ref if textInfoTarget is set.
+    if (textInfoTarget)
+    {
+        if (*textInfoTarget < textInfos.size())
+        {
+            textInfo = &textInfos[*textInfoTarget];
+        }
+        else
+        {
+            log("Out of bounds text info target: " + std::to_string(*textInfoTarget));
+            textInfo = NULL;
+        }
+    }
+
+    return textInfo;
 }
 
 std::string TextInfo::toString()

@@ -51,5 +51,7 @@ private:
 
 	SIZE getTextSize(const std::string &text);
 	std::optional<size_t> textInfoTarget;
+
+	TextInfo* getTextInfoTarget();
 };
 #pragma once

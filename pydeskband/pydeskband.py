@@ -1,3 +1,4 @@
+import contextlib
 import os
 import pathlib
 import sys
@@ -9,9 +10,16 @@ from typing import Union
 
 @dataclass
 class Size:
-    ''' a Python-version of the SIZE struct in WinApi '''
+    ''' A Python-version of the SIZE struct in WinApi '''
     x: int
     y: int
+
+@dataclass
+class Color:
+    ''' Representation of an RGB color '''
+    red: int
+    green: int
+    blue: int
 
 class _LogTailer(Thread):
     ''' A Thread that can follow/print new lines in the pydeskband log file (which is written by the DLL) '''
@@ -99,24 +107,11 @@ class ControlPipe:
     def add_new_text_info(self, text:str, x:int=0, y:int=0, red:int=255, green:int=255, blue:int=255) -> None:
         ''' Creates a new TextInfo with the given text,x/y, and rgb text color '''
         self.send_command('NEW_TEXTINFO')
-
-        self.send_command([
-            'SET', 'RGB', red, green, blue
-        ])
-        self.send_command([
-            'SET', 'XY', x, y
-        ])
-        self.send_command([
-            'SET', 'TEXT', self._verify_input_text(text)
-        ])
-
-    def modify_text_info(self, idx:int, text:str) -> None:
-        ''' Sets the text of the TextInfo at the given index '''
-        self.send_command(["SET", "TEXTINFO_TARGET", str(idx)])
-        self.send_command([
-            'SET', 'TEXT', self._verify_input_text(text)
-        ])
-        self.send_command(["SET", "TEXTINFO_TARGET"])
+        self._set_color(red, green, blue)
+        self._set_coordinates(x, y)
+        self._set_text(text)
+        idx = (self.get_text_info_count() - 1)
+        return TextInfo(self, idx)
 
     def get_text_size(self, text:str) -> Size:
         ''' Gets a Size object corresponding with the x,y size this text would be (likely in pixels) '''
@@ -167,8 +162,52 @@ class ControlPipe:
             raise ValueError(f"text cannot contain a ',' sign. Text: {text}")
         return text
 
+    def _set_text(self, text:str) -> str:
+        ''' Call to SET TEXT in the DLL '''
+        return self.send_command([
+            'SET', 'TEXT', self._verify_input_text(text)
+        ])
+
+    def _set_color(self, red:int=255, green:int=255, blue:int=255) -> str:
+        ''' Call to SET RGB in the DLL '''
+        return self.send_command([
+            'SET', 'RGB', red, green, blue
+        ])
+
+    def _set_coordinates(self, x:int=0, y:int=0) -> str:
+        ''' Call to SET XY in the DLL '''
+        return self.send_command([
+            'SET', 'XY', x, y
+        ])
+
+    def _set_textinfo_target(self, idx:Union[int, None]=None) -> str:
+        ''' Call to SET TEXTINFO_TARGET in the DLL. Passing an index of None will lead to the last TextInfo being targeted '''
+        if idx is None:
+            return self.send_command(["SET", "TEXTINFO_TARGET"])
+        else:
+            return self.send_command(["SET", "TEXTINFO_TARGET", str(idx)])
+
+    def _get_text(self) -> str:
+        ''' Call to GET TEXT in the DLL '''
+        return self.send_command(["GET", "TEXT"], check_ok=False)
+
+    def _get_color(self) -> Color:
+        ''' Call to GET RGB in the DLL '''
+        r, g, b = self.send_command(["GET", "RGB"], check_ok=False).split(',')
+        return Color(r, g, b)
+
+    def _get_coordinates(self) -> Size:
+        ''' Call to GET XY in the DLL '''
+        x, y = self.send_command(["GET", "XY"], check_ok=False).split(',')
+        return Size(x, y)
+
+    def _get_textinfo_target(self) -> Union[int, None]:
+        ''' Call to GET TEXTINFO_TARGET in the DLL. A return of None, means that the current target is the last TextInfo.'''
+        # Cheap use of eval. It can be 'None' or an int.
+        return eval(self.send_command(["GET", "TEXTINFO_TARGET"], check_ok=False))
+
     def __test(self):
-        ''' a test '''
+        ''' a test... that is broken at the moment :) '''
         import psutil, time
 
         def get_bytes_recv():
@@ -201,3 +240,57 @@ class ControlPipe:
             lastBytes = thisBytes
 
             self.paint()
+
+class TextInfo:
+    '''
+    Represents a reference to a TextInfo object in the DLL.
+
+    A TextInfo is a specific line/piece of text with a specific X/Y, RGB color, and text.
+    '''
+    def __init__(self, control_pipe:ControlPipe, idx:int):
+        self.controlPipe = control_pipe
+        self._idx = idx
+
+    @contextlib.contextmanager
+    def targeting_this_textinfo(self):
+        previous_target = self.controlPipe._get_textinfo_target()
+        self.controlPipe._set_textinfo_target(self._idx)
+        try:
+            yield
+        finally:
+            self.controlPipe._set_textinfo_target(previous_target)
+
+    def set_text(self, text:str) -> None:
+        ''' Sets the text of this TextInfo '''
+        with self.targeting_this_textinfo():
+            self.controlPipe._set_text(text)
+
+    def set_color(self, red:int=255, green:int=255, blue:int=255) -> None:
+        ''' Sets the color of this TextInfo '''
+        with self.targeting_this_textinfo():
+            self.controlPipe._set_color(red, green, blue)
+
+    def set_coordinates(self, x:int=0, y:int=0) -> None:
+        ''' Sets the X/Y coordinates of this TextInfo '''
+        with self.targeting_this_textinfo():
+            self.controlPipe._set_coordinates(x, y)
+
+    def get_text(self) -> str:
+        ''' Gets the text of this TextInfo '''
+        with self.targeting_this_textinfo():
+            return self.controlPipe._get_text()
+
+    def get_color(self) -> Color:
+        ''' Gets the color of this TextInfo '''
+        with self.targeting_this_textinfo():
+            return self.controlPipe._get_color()
+
+    def get_coordinates(self) -> Size:
+        ''' Gets the X/Y coordinates of this TextInfo '''
+        with self.targeting_this_textinfo():
+            return self.controlPipe._get_coordinates()
+
+    def get_text_size(self) -> Size:
+        ''' Gets the pixel size of the text within this TextInfo '''
+        text = self.get_text()
+        return self.controlPipe.get_text_size(text)
