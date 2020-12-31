@@ -3,6 +3,7 @@
 #include "Logger.h"
 
 #include <uxtheme.h>
+#include <exception>
 #include <iostream>
 #include <string>
 #include <sstream>
@@ -175,163 +176,196 @@ void ControlPipe::asyncHandlingLoop()
     log("Exited loop");
 }
 
+class TextInfoNullException : public std::exception
+{
+    using std::exception::exception;
+};
+
+TextInfo* verifyTextInfo(TextInfo* textInfo)
+{
+    if (textInfo == NULL)
+    { 
+        throw TextInfoNullException("TextInfo was NULL");
+    }
+    return textInfo;
+}
+
 std::string ControlPipe::processRequest(std::string message)
 {
-    std::string ret = "BadCommand";
+    // std::string ret = "BadCommand";
     auto lineSplit = split(message, TRANSPORT_DELIM[0]);
-    auto textInfo = getTextInfoTarget();
 
-    #define ENSURE_TEXT_INFO_OK() if (textInfo == NULL) { return "OutOfBoundsTextInfoTarget\n";}
+    // Do not use __textInfo directly... it may be NULL. Use GET_TEXT_INFO, which will throw if NULL.
+    auto __textInfo = getTextInfoTarget();
+    #define GET_TEXT_INFO() verifyTextInfo(__textInfo)
 
-    if (lineSplit.size())
+    Response response;
+    
+    try
     {
-        if (lineSplit[0] == "GET")
+        if (lineSplit.size())
         {
-            if (lineSplit[1] == "WIDTH")
+            if (lineSplit[0] == "GET")
             {
-                RECT rc;
-                GetClientRect(deskband->m_hwnd, &rc);
-                ret = std::to_string(rc.right - rc.left);
-            }
-            else if (lineSplit[1] == "HEIGHT")
-            {
-                RECT rc;
-                GetClientRect(deskband->m_hwnd, &rc);
-                ret = std::to_string(rc.bottom - rc.top);
-            }
-            else if (lineSplit[1] == "TEXTSIZE")
-            {
-                auto size = getTextSize(lineSplit[2]);
-                ret = std::to_string(size.cx) + TRANSPORT_DELIM + std::to_string(size.cy);
-            }
-            else if (lineSplit[1] == "TEXTINFOCOUNT")
-            {
-                ret = std::to_string(textInfos.size());
-            }
-            else if (lineSplit[1] == "TEXTINFO_TARGET")
-            {
-                if (textInfoTarget)
+                if (lineSplit[1] == "WIDTH")
                 {
-                    ret = std::to_string(*textInfoTarget);
+                    RECT rc;
+                    GetClientRect(deskband->m_hwnd, &rc);
+                    response.addField(std::to_string(rc.right - rc.left));
                 }
-                else
+                else if (lineSplit[1] == "HEIGHT")
                 {
-                    ret = "None";
+                    RECT rc;
+                    GetClientRect(deskband->m_hwnd, &rc);
+                    response.addField(std::to_string(rc.bottom - rc.top));
                 }
-            }
-            else if (lineSplit[1] == "RGB")
-            {
-                ENSURE_TEXT_INFO_OK();
-                ret = std::to_string(textInfo->red) + TRANSPORT_DELIM + std::to_string(textInfo->green) + TRANSPORT_DELIM + std::to_string(textInfo->blue);
-            }
-            else if (lineSplit[1] == "TEXT")
-            {
-                ENSURE_TEXT_INFO_OK();
-                ret = textInfo->text;
-            }
-            else if (lineSplit[1] == "XY")
-            {
-                ENSURE_TEXT_INFO_OK();
-                ret = std::to_string(textInfo->rect.left) + TRANSPORT_DELIM + std::to_string(textInfo->rect.top);
-            }
-        }
-        else if (lineSplit[0] == "SET")
-        {
-            if (lineSplit[1] == "RGB")
-            {
-                ENSURE_TEXT_INFO_OK();
-                textInfo->red = std::stoi(lineSplit[2]);
-                textInfo->green = std::stoi(lineSplit[3]);
-                textInfo->blue = std::stoi(lineSplit[4]);
-                ret = "OK";
-            }
-            else if (lineSplit[1] == "TEXT")
-            {
-                ENSURE_TEXT_INFO_OK();
-                textInfo->text = std::string(lineSplit[2]);
-                ret = "OK";
-            }
-            else if (lineSplit[1] == "XY")
-            {
-                ENSURE_TEXT_INFO_OK();
-
-                // xy from top left
-                textInfo->rect.left = std::stol(lineSplit[2]);
-                textInfo->rect.top = std::stol(lineSplit[3]);
-                ret = "OK";
-            }
-            else if (lineSplit[1] == "WIN_MSG")
-            {
-                // set a (not already handled) Windows Message control to call something
-                auto msg = std::stoi(lineSplit[2]);
-                if (lineSplit.size() < 4)
+                else if (lineSplit[1] == "TEXTSIZE")
                 {
-                    if (msgToAction.find(msg) != msgToAction.end())
+                    auto size = getTextSize(lineSplit[2]);
+                    response.addField(std::to_string(size.cx));
+                    response.addField(std::to_string(size.cy));
+                }
+                else if (lineSplit[1] == "TEXTINFOCOUNT")
+                {
+                    response.addField(std::to_string(textInfos.size()));
+                }
+                else if (lineSplit[1] == "TEXTINFO_TARGET")
+                {
+                    if (textInfoTarget)
                     {
-                        msgToAction.erase(msg);
-                        ret = "OK";
+                        response.addField(std::to_string(*textInfoTarget));
                     }
                     else
                     {
-                        ret = "MSG_NOT_FOUND";
+                        response.addField("None");
                     }
                 }
-                else
+                else if (lineSplit[1] == "RGB")
                 {
-                    auto sysCall = std::string(lineSplit[3]);
-                    msgToAction[msg] = sysCall;
-                    ret = "OK";
+                    auto textInfo = GET_TEXT_INFO();
+                    response.addField(std::to_string(textInfo->red));
+                    response.addField(std::to_string(textInfo->green));
+                    response.addField(std::to_string(textInfo->blue));
+                }
+                else if (lineSplit[1] == "TEXT")
+                {
+                    auto textInfo = GET_TEXT_INFO();
+                    response.addField(textInfo->text);
+                }
+                else if (lineSplit[1] == "XY")
+                {
+                    auto textInfo = GET_TEXT_INFO();
+                    response.addField(std::to_string(textInfo->rect.left));
+                    response.addField(std::to_string(textInfo->rect.top));
+                }
+                else if (lineSplit[1] == "TRANSPORT_VERSION")
+                {
+                    auto textInfo = GET_TEXT_INFO();
+                    response.addField("1");
                 }
             }
-            else if (lineSplit[1] == "TEXTINFO_TARGET")
+            else if (lineSplit[0] == "SET")
             {
-                if (lineSplit.size() == 3)
+                if (lineSplit[1] == "RGB")
                 {
-                    textInfoTarget = (size_t)std::stoull(lineSplit[2]);
-                    log("Set textInfoTarget to: " + std::to_string(*textInfoTarget));
+                    auto textInfo = GET_TEXT_INFO();
+                    textInfo->red = std::stoi(lineSplit[2]);
+                    textInfo->green = std::stoi(lineSplit[3]);
+                    textInfo->blue = std::stoi(lineSplit[4]);
+                    response.setOk();
                 }
-                else
+                else if (lineSplit[1] == "TEXT")
                 {
-                    textInfoTarget.reset();
-                    log("Set textInfoTarget to: <reset>");
+                    auto textInfo = GET_TEXT_INFO();
+                    textInfo->text = std::string(lineSplit[2]);
+                    response.setOk();
                 }
-                ret = "OK";
+                else if (lineSplit[1] == "XY")
+                {
+                    auto textInfo = GET_TEXT_INFO();
+
+                    // xy from top left
+                    textInfo->rect.left = std::stol(lineSplit[2]);
+                    textInfo->rect.top = std::stol(lineSplit[3]);
+                    response.setOk();
+                }
+                else if (lineSplit[1] == "WIN_MSG")
+                {
+                    // set a (not already handled) Windows Message control to call something
+                    auto msg = std::stoi(lineSplit[2]);
+                    if (lineSplit.size() < 4)
+                    {
+                        if (msgToAction.find(msg) != msgToAction.end())
+                        {
+                            msgToAction.erase(msg);
+                            response.setOk();
+                        }
+                        else
+                        {
+                            response.setStatus("MSG_NOT_FOUND");
+                        }
+                    }
+                    else
+                    {
+                        auto sysCall = std::string(lineSplit[3]);
+                        msgToAction[msg] = sysCall;
+                        response.setOk();
+                    }
+                }
+                else if (lineSplit[1] == "TEXTINFO_TARGET")
+                {
+                    if (lineSplit.size() == 3)
+                    {
+                        textInfoTarget = (size_t)std::stoull(lineSplit[2]);
+                        log("Set textInfoTarget to: " + std::to_string(*textInfoTarget));
+                    }
+                    else
+                    {
+                        textInfoTarget.reset();
+                        log("Set textInfoTarget to: <reset>");
+                    }
+                    response.setOk();
+                }
+                else if (lineSplit[1] == "LOGGING_ENABLED")
+                {
+                    setLoggingEnabled((bool)std::stoi(lineSplit[2]));
+                    response.setOk();
+                }
             }
-            else if (lineSplit[1] == "LOGGING_ENABLED")
+            else if (lineSplit[0] == "NEW_TEXTINFO")
             {
-                setLoggingEnabled((bool)std::stoi(lineSplit[2]));
-                ret = "OK";
+                textInfos.push_back(TextInfo());
+                response.setOk();
             }
-        }
-        else if (lineSplit[0] == "NEW_TEXTINFO")
-        {
-            textInfos.push_back(TextInfo());
-            ret = "OK";
-        }
-        else if (lineSplit[0] == "PAINT")
-        {
-            InvalidateRect(deskband->m_hwnd, NULL, true);
-            ret = "OK";
-        }
-        else if (lineSplit[0] == "CLEAR")
-        {
-            textInfos.clear();
-            InvalidateRect(deskband->m_hwnd, NULL, true);
-            ret = "OK";
-        }
-        else if (lineSplit[0] == "STOP")
-        {
-            shouldStop = true;
-            ret = "OK";
-        }
-        else if (lineSplit[0] == "SENDMESSAGE")
-        {
-            SendMessage(deskband->m_hwnd, std::stoi(lineSplit[1]), 0, 0);
-            ret = "OK";
+            else if (lineSplit[0] == "PAINT")
+            {
+                InvalidateRect(deskband->m_hwnd, NULL, true);
+                response.setOk();
+            }
+            else if (lineSplit[0] == "CLEAR")
+            {
+                textInfos.clear();
+                InvalidateRect(deskband->m_hwnd, NULL, true);
+                response.setOk();
+            }
+            else if (lineSplit[0] == "STOP")
+            {
+                shouldStop = true;
+                response.setOk();
+            }
+            else if (lineSplit[0] == "SENDMESSAGE")
+            {
+                SendMessage(deskband->m_hwnd, std::stoi(lineSplit[1]), 0, 0);
+                response.setOk();;
+            }
         }
     }
+    catch (TextInfoNullException)
+    {
+        response.setStatus("TextInfoTargetInvalid");
+    }
 
-    return ret + '\n';
+    return response.toString();
 }
 
 SIZE ControlPipe::getTextSize(const std::string& text)
@@ -384,4 +418,36 @@ std::string TextInfo::toString()
     retString += "    Bottom: " + std::to_string(rect.bottom) + "\n";
     retString += "  Text:     " + text + "\n";
     return retString;
+}
+
+Response::Response()
+{
+    status = "BadCommand";
+}
+
+void Response::addField(std::string field)
+{
+    fields.push_back(field);
+    status = "OK";
+}
+
+void Response::setStatus(std::string status)
+{
+    this->status = status;
+}
+
+void Response::setOk()
+{
+    status = "OK";
+}
+
+std::string Response::toString()
+{
+    std::string ret = status + TRANSPORT_DELIM;
+    for (auto& field : fields)
+    {
+        ret += field + TRANSPORT_DELIM;
+    }
+
+    return ret + "\n";
 }

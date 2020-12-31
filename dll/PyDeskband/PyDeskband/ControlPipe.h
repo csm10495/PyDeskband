@@ -26,6 +26,21 @@ struct TextInfo
 	std::string toString();
 };
 
+class Response
+{
+public:
+	Response();
+
+	void addField(std::string field);
+	void setStatus(std::string status);
+	void setOk();
+
+	std::string toString();
+private:
+	std::string status;
+	std::vector<std::string> fields;
+};
+
 class ControlPipe
 {
 public:

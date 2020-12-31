@@ -62,7 +62,7 @@ class ControlPipe:
         ''' For use as a contextmanager... Closes the handle to the pipe '''
         self.pipe.close()
 
-    def send_command(self, cmd:Union[list, tuple, str], check_ok:bool=True) -> str:
+    def send_command(self, cmd:Union[list, tuple, str], check_ok:bool=True) -> list:
         '''
         The main entry point to go from Python to/from the C++ code. It is very unlikely that a regular user
         would want to call this directly. If something is done incorrectly here, PyDeskband will likely crash...
@@ -70,11 +70,11 @@ class ControlPipe:
 
         Arguments:
             cmd: Either a list of command keywords or a string of a full command
-            check_ok: If True, raise ValueError if C++ does not give back "OK"
-                All commands that don't give back a specific response, return "OK"
+            check_ok: If True, raise ValueError if C++ does not give back "OK" as the return status.
+                If set, will remove OK from the return list.
 
         Returns:
-            A string of the response given from PyDeskband
+            A list of return fields.
         '''
         if isinstance(cmd, (list, tuple)):
             cmd = ','.join([str(c) for c in cmd])
@@ -85,24 +85,29 @@ class ControlPipe:
         if bytes_written != len(cmd):
             raise RuntimeError(f"Unable to write all the bytes down the pipe. Wrote: {bytes_written} instead of {len(cmd)}")
 
-        response = self.pipe.readline().strip().decode()
+        response = self.pipe.readline().strip().decode().split(',')
 
-        if check_ok and response != 'OK':
-            raise ValueError(f"Response was not OK. It was: {response}")
+        if not response:
+            raise ValueError("Response was empty.")
+
+        if check_ok:
+            if response[0] != 'OK':
+                raise ValueError(f"Response was not OK. It was: {response[0]}")
+            response = response[1:]
 
         return response
 
     def get_width(self) -> int:
         ''' Get the current width (in pixels) of the deskband '''
-        return int(self.send_command(['GET', 'WIDTH'], check_ok=False))
+        return int(self.send_command(['GET', 'WIDTH'])[0])
 
     def get_height(self) -> int:
         ''' Get the current height (in pixels) of the deskband '''
-        return int(self.send_command(['GET', 'HEIGHT'], check_ok=False))
+        return int(self.send_command(['GET', 'HEIGHT'])[0])
 
     def get_text_info_count(self) -> int:
         ''' Get the count of TextInfos currently saved '''
-        return int(self.send_command(['GET', 'TEXTINFOCOUNT'], check_ok=False))
+        return int(self.send_command(['GET', 'TEXTINFOCOUNT'])[0])
 
     def add_new_text_info(self, text:str, x:int=0, y:int=0, red:int=255, green:int=255, blue:int=255) -> None:
         ''' Creates a new TextInfo with the given text,x/y, and rgb text color '''
@@ -117,7 +122,7 @@ class ControlPipe:
         ''' Gets a Size object corresponding with the x,y size this text would be (likely in pixels) '''
         x, y = self.send_command([
             'GET', 'TEXTSIZE', self._verify_input_text(text)
-        ], check_ok=False).split(',')
+        ], check_ok=False)[:2]
         return Size(x, y)
 
     def paint(self) -> None:
@@ -149,6 +154,14 @@ class ControlPipe:
             self._log_tailer.start()
         else:
             _stop_log_tailer()
+
+    def get_transport_version(self) -> int:
+        '''
+        Gets the current transport version from the DLL.
+        '''
+        return int(self.send_command([
+            'GET', 'TRANSPORT_VERSION'
+        ])[0])
 
     def _send_message(self, msg:int) -> None:
         ''' Likely only useful for debugging. Send a WM_... message with the given id to our hwnd.'''
@@ -189,22 +202,22 @@ class ControlPipe:
 
     def _get_text(self) -> str:
         ''' Call to GET TEXT in the DLL '''
-        return self.send_command(["GET", "TEXT"], check_ok=False)
+        return self.send_command(["GET", "TEXT"])[0]
 
     def _get_color(self) -> Color:
         ''' Call to GET RGB in the DLL '''
-        r, g, b = self.send_command(["GET", "RGB"], check_ok=False).split(',')
+        r, g, b = self.send_command(["GET", "RGB"])[:3]
         return Color(r, g, b)
 
     def _get_coordinates(self) -> Size:
         ''' Call to GET XY in the DLL '''
-        x, y = self.send_command(["GET", "XY"], check_ok=False).split(',')
+        x, y = self.send_command(["GET", "XY"])[:2]
         return Size(x, y)
 
     def _get_textinfo_target(self) -> Union[int, None]:
         ''' Call to GET TEXTINFO_TARGET in the DLL. A return of None, means that the current target is the last TextInfo.'''
         # Cheap use of eval. It can be 'None' or an int.
-        return eval(self.send_command(["GET", "TEXTINFO_TARGET"], check_ok=False))
+        return eval(self.send_command(["GET", "TEXTINFO_TARGET"])[0])
 
     def __test(self):
         ''' a test... that is broken at the moment :) '''
