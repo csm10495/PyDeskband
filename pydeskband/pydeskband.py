@@ -1,21 +1,57 @@
+import os
+import pathlib
+import sys
+import time
+
 from dataclasses import dataclass
+from threading import Thread, Event
 from typing import Union
 
 @dataclass
 class Size:
+    ''' a Python-version of the SIZE struct in WinApi '''
     x: int
     y: int
+
+class _LogTailer(Thread):
+    ''' A Thread that can follow/print new lines in the pydeskband log file (which is written by the DLL) '''
+    LOG_PATH = pathlib.Path(os.path.expandvars('%TEMP%/pydeskband.log'))
+    def __init__(self):
+        self.exit_event = Event()
+
+        if not _LogTailer.LOG_PATH.is_file():
+            raise FileNotFoundError("PyDeskband log was not found")
+
+        self.starting_offset = _LogTailer.LOG_PATH.stat().st_size
+
+        Thread.__init__(self, daemon=True)
+
+    def run(self):
+        ''' Ran in the other thread. Will effectively 'tail -f' the log file and print to stderr the new lines '''
+        with open(_LogTailer.LOG_PATH, 'rb') as log_file:
+            log_file.seek(self.starting_offset)
+            while not self.exit_event.is_set():
+                line = log_file.readline().rstrip().decode()
+                if line:
+                    print(line, file=sys.stderr)
+                time.sleep(.01)
 
 class ControlPipe:
     ''' The mechanism for controlling PyDeskband.'''
     def __init__(self):
         ''' Note that this may raise if PyDeskband is not in use '''
-        self.pipe = open('\\\\.\\pipe\\PyDeskbandControlPipe', 'r+b', buffering=0)
+        try:
+            self.pipe = open('\\\\.\\pipe\\PyDeskbandControlPipe', 'r+b', buffering=0)
+        except FileNotFoundError as ex:
+            raise FileNotFoundError(f"The PyDeskbandControlPipe is not available. Is the deskband enabled?.. {str(ex)}")
+        self._log_tailer = None
 
     def __enter__(self):
+        ''' For use as a contextmanager '''
         return self
 
     def __exit__(self, type, value, traceback):
+        ''' For use as a contextmanager... Closes the handle to the pipe '''
         self.pipe.close()
 
     def send_command(self, cmd:Union[list, tuple, str], check_ok:bool=True) -> str:
@@ -49,12 +85,15 @@ class ControlPipe:
         return response
 
     def get_width(self) -> int:
+        ''' Get the current width (in pixels) of the deskband '''
         return int(self.send_command(['GET', 'WIDTH'], check_ok=False))
 
     def get_height(self) -> int:
+        ''' Get the current height (in pixels) of the deskband '''
         return int(self.send_command(['GET', 'HEIGHT'], check_ok=False))
 
     def get_text_info_count(self) -> int:
+        ''' Get the count of TextInfos currently saved '''
         return int(self.send_command(['GET', 'TEXTINFOCOUNT'], check_ok=False))
 
     def add_new_text_info(self, text:str, x:int=0, y:int=0, red:int=255, green:int=255, blue:int=255) -> None:
@@ -94,11 +133,27 @@ class ControlPipe:
         ''' Clears all TextInfos and re-paints '''
         self.send_command('CLEAR')
 
-    def set_logging(self, enabled:bool) -> None:
-        ''' enables/disables logging in the C++ module. Logging goes to %TEMP%/pydeskband.log '''
+    def set_logging(self, enabled:bool, tail:bool=False) -> None:
+        '''
+        Enables/disables logging in the C++ module. Logging goes to %TEMP%/pydeskband.log.
+        If tail is True, will attempt to tail the output to stderr in Python.
+         '''
         self.send_command([
             'SET', 'LOGGING_ENABLED', 1 if enabled else 0
         ])
+
+        def _stop_log_tailer():
+            if self._log_tailer:
+                self._log_tailer.exit_event.set()
+                self._log_tailer.join()
+                self._log_tailer = None
+
+        if tail:
+            _stop_log_tailer()
+            self._log_tailer = _LogTailer()
+            self._log_tailer.start()
+        else:
+            _stop_log_tailer()
 
     def _send_message(self, msg:int) -> None:
         ''' Likely only useful for debugging. Send a WM_... message with the given id to our hwnd.'''
@@ -112,7 +167,7 @@ class ControlPipe:
             raise ValueError(f"text cannot contain a ',' sign. Text: {text}")
         return text
 
-    def test(self):
+    def __test(self):
         ''' a test '''
         import psutil, time
 
