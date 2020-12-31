@@ -12,6 +12,8 @@ The Python front-end contains a means to control the C++ backend to control what
 
 <img src="https://i.imgur.com/TJkWOhb.png">
 
+Note that the APIs are still being designed and subject to change.
+
 # What is a Deskband?
 
 A Deskband is an additonal toolbar placed on the right-hand-side of the Windows Taskbar. Interestingly, enough they are considered deprecated as of Windows 10, but as of this writing still work just fine. Here is some [documentation](https://docs.microsoft.com/en-us/previous-versions/windows/desktop/legacy/cc144099(v=vs.85)) that includes high-level information on Deskbands.
