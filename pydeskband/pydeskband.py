@@ -1,4 +1,5 @@
 import contextlib
+import enum
 import os
 import pathlib
 import sys
@@ -6,7 +7,7 @@ import time
 
 from dataclasses import dataclass
 from threading import Thread, Event
-from typing import Union
+from typing import Union, TypeVar
 
 @dataclass
 class Size:
@@ -125,8 +126,8 @@ class ControlPipe:
         ''' Gets a Size object corresponding with the x,y size this text would be (likely in pixels) '''
         x, y = self.send_command([
             'GET', 'TEXTSIZE', self._verify_input_text(text)
-        ], check_ok=False)[:2]
-        return Size(x, y)
+        ])[:2]
+        return Size(int(x), int(y))
 
     def paint(self) -> None:
         ''' Requests that PyDeskband repaint all TextInfos now '''
@@ -208,6 +209,11 @@ class ControlPipe:
 
     def _set_coordinates(self, x:int=0, y:int=0) -> str:
         ''' Call to SET XY in the DLL '''
+        if x < 0:
+            raise ValueError(f"x cannot be less than 0. It was set to: {x}")
+        if y < 0:
+            raise ValueError(f"y cannot be less than 0. It was set to: {y}")
+
         return self.send_command([
             'SET', 'XY', x, y
         ])
@@ -226,12 +232,12 @@ class ControlPipe:
     def _get_color(self) -> Color:
         ''' Call to GET RGB in the DLL '''
         r, g, b = self.send_command(["GET", "RGB"])[:3]
-        return Color(r, g, b)
+        return Color(int(r), int(g), int(b))
 
     def _get_coordinates(self) -> Size:
         ''' Call to GET XY in the DLL '''
         x, y = self.send_command(["GET", "XY"])[:2]
-        return Size(x, y)
+        return Size(int(x), int(y))
 
     def _get_textinfo_target(self) -> Union[int, None]:
         ''' Call to GET TEXTINFO_TARGET in the DLL. A return of None, means that the current target is the last TextInfo.'''
@@ -249,7 +255,7 @@ class ControlPipe:
             get_mbps_down.last_bytes = psutil.net_io_counters().bytes_recv
 
             now = time.time()
-            mbps = (get_mbps_down.last_bytes - float(last_bytes)) / 125000.0 /  (now - last_timestamp)
+            mbps = (get_mbps_down.last_bytes - float(last_bytes)) / 125000.0 / max(.0000001, now - last_timestamp)
             get_mbps_down.last_timestamp = now
             return mbps
 
@@ -260,7 +266,7 @@ class ControlPipe:
             get_mbps_up.last_bytes = psutil.net_io_counters().bytes_sent
 
             now = time.time()
-            mbps = (get_mbps_up.last_bytes - float(last_bytes)) / 125000.0 /  (now - last_timestamp)
+            mbps = (get_mbps_up.last_bytes - float(last_bytes)) / 125000.0 /  max(.0000001, now - last_timestamp)
             get_mbps_up.last_timestamp = now
             return mbps
 
@@ -271,15 +277,33 @@ class ControlPipe:
 
         # Left click: Open task manager
         self.set_windows_message_handle_shell_cmd(0x0201, r'start C:\Windows\System32\Taskmgr.exe')
-        cpuTextInfo = self.add_new_text_info('')
-        netDownTextInfo = self.add_new_text_info('', y=20)
+        cpuTextInfo = self.add_new_text_info('CPU:')
+        cpuValueTextInfo = self.add_new_text_info('0%')
+        netDownTextInfo = self.add_new_text_info('')
+        netDownTextInfo.justify_this_with_respect_to_that(cpuTextInfo, Justification.BELOW)
 
         while True:
             cpu = get_cpu_used_percent()
-            cpuTextInfo.set_text(f'CPU: {cpu}%')
+            if cpu < 40:
+                cpuValueTextInfo.set_color(0, 250, 0)
+            elif cpu < 80:
+                cpuValueTextInfo.set_color(0, 250, 150)
+            elif cpu < 90:
+                cpuValueTextInfo.set_color(252, 148, 57)
+            else:
+                cpuValueTextInfo.set_color(250, 0, 0)
+
+            cpuValueTextInfo.set_text(f'{cpu:.02f}%')
+            cpuValueTextInfo.justify_this_with_respect_to_that(cpuTextInfo, Justification.RIGHT_OF)
             netDownTextInfo.set_text(f'Net: {get_mbps_down():.02f}/{get_mbps_up():.02f} Mbps')
             self.paint()
-            time.sleep(1)
+            #time.sleep(1)
+
+class Justification(enum.Enum):
+    LEFT_OF = 'Left of'
+    RIGHT_OF = 'Right of'
+    BELOW = 'Below'
+    ABOVE = 'Above'
 
 class TextInfo:
     '''
@@ -334,3 +358,51 @@ class TextInfo:
         ''' Gets the pixel size of the text within this TextInfo '''
         text = self.get_text()
         return self.controlPipe.get_text_size(text)
+
+    def justify_this_with_respect_to_that(self, that_text_info:TypeVar('TextInfo'), justify:Justification=Justification.RIGHT_OF, gap:Union[None, int]=None):
+        '''
+        Put this TextInfo to the <justify> of that TextInfo.
+
+        Gap is the distance in pixels between text_infos. If it is None, will be the size of a space (' ') character.
+
+        Only self (this) moves. that_text_info does not move.
+
+        Note that if a coordinate is calculated to be negative (in order to be in the correct spot) it will be set to 0.
+        '''
+        if gap is None:
+            gap = self.controlPipe.get_text_size(' ').x
+
+        that_coordinates = that_text_info.get_coordinates()
+        # that_text_info DOES NOT move. Only self (this) does.
+
+        # Right now things can wind up out of bounds in postive x and y directions.
+        #  We could fix that later if desired.
+
+        if justify == Justification.RIGHT_OF:
+            # THIS THAT
+            that_text_size = that_text_info.get_text_size()
+            new_x = that_coordinates.x + that_text_size.x + gap
+            self.set_coordinates(max(0, new_x), that_coordinates.y)
+        elif justify == Justification.LEFT_OF:
+            # THAT THIS
+            this_text_size = self.get_text_size()
+
+            new_x = that_coordinates.x - this_text_size.x - gap
+            self.set_coordinates(max(0, new_x), that_coordinates.y)
+        elif justify == Justification.BELOW:
+            # THIS
+            # THAT
+            that_text_size = that_text_info.get_text_size()
+            new_y = that_coordinates.y + that_text_size.y + gap
+
+            self.set_coordinates(that_coordinates.x, max(0, new_y))
+
+        elif justify == Justification.ABOVE:
+            # THAT
+            # THIS
+            this_text_size = self.get_text_size()
+            new_y = that_coordinates.y - this_text_size.y - gap
+
+            self.set_coordinates(that_coordinates.x, max(0, new_y))
+        else:
+            raise ValueError("justify must be defined in the Justification enum")
