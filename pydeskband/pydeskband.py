@@ -244,7 +244,7 @@ class ControlPipe:
         # Cheap use of eval. It can be 'None' or an int.
         return eval(self.send_command(["GET", "TEXTINFO_TARGET"])[0])
 
-    def _test(self):
+    def _test(self, sleep_time:int=1):
         ''' a test... :) '''
         import psutil, time
 
@@ -297,7 +297,7 @@ class ControlPipe:
             cpuValueTextInfo.justify_this_with_respect_to_that(cpuTextInfo, Justification.RIGHT_OF)
             netDownTextInfo.set_text(f'Net: {get_mbps_down():.02f}/{get_mbps_up():.02f} Mbps')
             self.paint()
-            #time.sleep(1)
+            time.sleep(sleep_time)
 
 class Justification(enum.Enum):
     LEFT_OF = 'Left of'
