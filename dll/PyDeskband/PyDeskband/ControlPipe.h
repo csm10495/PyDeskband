@@ -51,9 +51,12 @@ public:
 
 	void paintAllTextInfos();
 
+	void stopAsyncResponseThread();
+
 private:
 
 	void asyncHandlingLoop();
+	void sendStopMessageToAsyncResponseThread();
 	std::string processRequest(std::string message);
 
 	HANDLE hPipe;

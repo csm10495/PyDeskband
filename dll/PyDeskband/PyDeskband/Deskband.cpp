@@ -117,6 +117,11 @@ STDMETHODIMP CDeskBand::CloseDW(DWORD)
 {
     if (m_hwnd)
     {
+        if (m_controlPipe)
+        {
+            m_controlPipe->stopAsyncResponseThread();
+        }
+
         ShowWindow(m_hwnd, SW_HIDE);
         DestroyWindow(m_hwnd);
         m_hwnd = NULL;

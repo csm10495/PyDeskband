@@ -130,6 +130,12 @@ void ControlPipe::paintAllTextInfos()
     EndPaint(m_hwnd, &ps);
 }
 
+void ControlPipe::stopAsyncResponseThread()
+{
+    sendStopMessageToAsyncResponseThread();
+    this->asyncResponseThread.join();
+}
+
 void ControlPipe::asyncHandlingLoop()
 {
     log("Starting loop");
@@ -174,6 +180,41 @@ void ControlPipe::asyncHandlingLoop()
     }
 
     log("Exited loop");
+}
+
+void ControlPipe::sendStopMessageToAsyncResponseThread()
+{
+    // tell async thread to stop. In the async thread, we're probably stuck in ReadFile. Tell that thread to stop it.
+    // If we don't stop that thread, explorer will crash when we try to unload.
+    HANDLE hPipe = CreateFile(
+        TEXT("\\\\.\\pipe\\PyDeskbandControlPipe"), 
+        GENERIC_WRITE,
+        0,              
+        NULL,           
+        OPEN_EXISTING,  
+        0,              
+        NULL);         
+
+    if (hPipe != INVALID_HANDLE_VALUE)
+    {
+        DWORD bytesWritten = 0;
+
+        const char* stop = "STOP";
+
+        BOOL fSuccess = WriteFile(
+            hPipe,            // pipe handle 
+            stop,             // message 
+            sizeof(stop),     // message length 
+            &bytesWritten,    // bytes written 
+            NULL);
+
+        if (!fSuccess) 
+        {
+            log("Failed to write STOP to the pipe");
+        }
+
+        CloseHandle(hPipe);
+    }
 }
 
 class TextInfoNullException : public std::exception
